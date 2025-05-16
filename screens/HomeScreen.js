@@ -1,75 +1,305 @@
-import React, { useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, 
   Text, 
   StyleSheet, 
   TouchableOpacity, 
-  ImageBackground, 
-  SafeAreaView,
+  ActivityIndicator, 
+  Alert,
+  Image,
+  ScrollView,
   StatusBar,
+  SafeAreaView,
+  Dimensions,
   Platform,
-  BackHandler
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { wp, hp, fontSize, colors, spacing } from '../utils/theme';
+import AsyncStorage from '@react-native-async-storage/async-storage'; //async doğru import edilişi 
+
+import * as theme from '../utils/theme';
+import { firebaseService } from '../services/firebase';
+import { loadInitialData } from '../utils/loadInitialData';
+import { LinearGradient } from 'expo-linear-gradient';
+
+const { width } = Dimensions.get('window');
 
 const HomeScreen = ({ navigation }) => {
-  // Uygulama çıkışı için back tuşunu yönet
+  const [loading, setLoading] = useState(true);
+  const [questionCount, setQuestionCount] = useState(0);
+  const [categoryCounts, setCategoryCounts] = useState({});
+  const [loadingData, setLoadingData] = useState(false);
+  const [developerMode, setDeveloperMode] = useState(false);
+  const [developerClickCount, setDeveloperClickCount] = useState(0);
+
   useEffect(() => {
-    const backAction = () => {
-      BackHandler.exitApp();
-      return true;
+    loadQuestionData();
+    loadDeveloperMode();
+    
+    // Firebase'den gelen verileri canlı olarak dinle
+    const unsubscribe = firebaseService.subscribeToQuestions((questions, error) => {
+      if (!error) {
+        setQuestionCount(questions.length);
+        
+        // Kategori bazlı soru sayılarını hesapla
+        const countsByCategory = {};
+        questions.forEach(question => {
+          if (question.category) {
+            if (!countsByCategory[question.category]) {
+              countsByCategory[question.category] = 0;
+            }
+            countsByCategory[question.category]++;
+          }
+        });
+        
+        setCategoryCounts(countsByCategory);
+        setLoading(false);
+      } else {
+        console.error('Sorular dinlenirken hata:', error);
+        setLoading(false);
+      }
+    });
+    
+    // Component unmount olduğunda dinleyiciyi kaldır
+    return () => {
+      unsubscribe && unsubscribe();
+      firebaseService.cleanup();
     };
-
-    const backHandler = BackHandler.addEventListener(
-      'hardwareBackPress',
-      backAction
-    );
-
-    return () => backHandler.remove();
   }, []);
+
+  // Geliştirici modu için AsyncStorage üzerinden ayarı yükle
+  const loadDeveloperMode = async () => {
+    try {
+      const value = await AsyncStorage.getItem('developerMode');
+      if (value !== null) {
+        setDeveloperMode(value === 'true');
+      }
+    } catch (error) {
+      console.error('Geliştirici modu yüklenirken hata:', error);
+    }
+  };
+
+  // Geliştirici modunu kaydet
+  const saveDeveloperMode = async (value) => {
+    try {
+      // String değere çevirerek kaydet
+      const stringValue = value === true ? 'true' : 'false';
+      await AsyncStorage.setItem('developerMode', stringValue);
+      setDeveloperMode(value);
+      console.log('Geliştirici modu başarıyla kaydedildi:', value);
+    } catch (error) {
+      console.error('Geliştirici modu kaydedilirken hata:', error);
+      // Hataya rağmen UI durumunu güncelle
+      setDeveloperMode(value);
+    }
+  };
+
+  // Logo ya  - 5 kez tıklanınca geliştirici modunu aç
+  const handleDeveloperModeClick = () => {
+    const newCount = developerClickCount + 1;
+    setDeveloperClickCount(newCount);
+    
+    if (newCount === 5) {
+      const newMode = !developerMode;
+      saveDeveloperMode(newMode);
+      if (newMode) {
+        Alert.alert('Geliştirici Modu', 'Geliştirici modu aktif edildi.');
+      } else {
+        Alert.alert('Geliştirici Modu', 'Geliştirici modu devre dışı bırakıldı.');
+      }
+      setDeveloperClickCount(0);
+    }
+  };
+
+  const loadQuestionData = async () => {
+    try {
+      setLoading(true);
+      // Başlangıç yüklemesi dinleyici aktif olana kadar
+      const questions = await firebaseService.getAllQuestions();
+      
+      // Sadece başlangıç yüklemesi için bir kez çalıştır
+      // Sonraki güncellemeler subscribeToQuestions üzerinden gelecek
+      setQuestionCount(questions.length);
+      
+      // Kategori bazlı soru sayılarını hesapla (başlangıç için)
+      const countsByCategory = {};
+      questions.forEach(question => {
+        if (question.category) {
+          if (!countsByCategory[question.category]) {
+            countsByCategory[question.category] = 0;
+          }
+          countsByCategory[question.category]++;
+        }
+      });
+      
+      setCategoryCounts(countsByCategory);
+    } catch (error) {
+      console.error('Veri yüklenirken hata:', error);
+      Alert.alert('Hata', 'Veriler yüklenirken bir hata oluştu. Lütfen internet bağlantınızı kontrol edin.');
+    }
+    // setLoading(false); yok çünkü dinleyici içinde yapılacak
+  };
+
+  const handleStartGame = () => {
+    if (questionCount === 0) {
+      Alert.alert(
+        'Uyarı', 
+        'Hiç soru bulunamadı. Lütfen soru yönetimi ekranından soru ekleyin.',
+        [
+          {
+            text: 'Tamam',
+            style: 'default'
+          }
+        ]
+      );
+    } else {
+      navigation.navigate('Game');
+    }
+  };
+
+  const handleLoadSampleData = async () => {
+    try {
+      setLoadingData(true);
+      const success = await loadInitialData();
+      
+      if (success) {
+        Alert.alert('Başarılı', 'Örnek veriler başarıyla yüklendi!');
+        // loadQuestionData çağrısına gerek yok, dinleyici otomatik güncelleyecek
+      } else {
+        Alert.alert('Hata', 'Örnek veriler yüklenemedi. Lütfen tekrar deneyin.');
+      }
+    } catch (error) {
+      console.error('Örnek veri yükleme hatası:', error);
+      Alert.alert('Hata', 'Örnek veriler yüklenirken bir hata oluştu. Lütfen tekrar deneyin.');
+    } finally {
+      setLoadingData(false);
+    }
+  };
+
+  // Menü öğesi bileşeni
+  const MenuItem = ({ icon, title, color, onPress, disabled, isLoading }) => (
+    <TouchableOpacity 
+      style={[styles.menuItem, { backgroundColor: color }]}
+      onPress={onPress}
+      disabled={disabled}
+    >
+      <View style={styles.menuItemContent}>
+        {isLoading ? (
+          <ActivityIndicator size="small" color="#fff" />
+        ) : (
+          <Icon name={icon} size={26} color="#fff" />
+        )}
+        <Text style={styles.menuItemText}>{title}</Text>
+      </View>
+    </TouchableOpacity>
+  );
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.loadingContainer}>
+        <StatusBar barStyle="light-content" backgroundColor={theme.colors.background} />
+        <ActivityIndicator size="large" color={theme.colors.primary} />
+        <Text style={styles.loadingText}>Yükleniyor...</Text>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor={colors.background} />
-      <LinearGradient
-        colors={[colors.background, colors.backgroundLight]}
-        style={styles.gradient}
-      >
-        <View style={styles.content}>
-          <View style={styles.header}>
-            <Icon name="brain" size={fontSize(20)} color={colors.white} />
-            <Text style={styles.title}>Bil Bakalım</Text>
-            <Text style={styles.subtitle}>Bilgi Yarışması</Text>
-          </View>
-
-          <View style={styles.buttonContainer}>
-            <TouchableOpacity
-              style={styles.button}
-              onPress={() => navigation.navigate('Categories')}
-              activeOpacity={0.8}
-            >
-              <LinearGradient
-                colors={[colors.primary, colors.primaryDark]}
-                style={styles.buttonGradient}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-              >
-                <Text style={styles.buttonText}>Başla</Text>
-                <Icon name="arrow-right" size={fontSize(6)} color={colors.white} />
-              </LinearGradient>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={styles.aboutButton}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.aboutText}>Hakkında</Text>
-            </TouchableOpacity>
+      <StatusBar barStyle="light-content" backgroundColor={theme.colors.primary} />
+      
+      {/* Üst Banner */}
+      <View style={styles.header}>
+        <View style={styles.headerContent}>
+          <TouchableOpacity onPress={handleDeveloperModeClick}>
+            <Icon name="brain" size={48} color="#fff" />
+          </TouchableOpacity>
+          <View style={styles.headerTextContainer}>
+            <Text style={styles.title}>SORU BİL</Text>
+            <Text style={styles.subtitle}>Bilginizi Test Edin!</Text>
           </View>
         </View>
-      </LinearGradient>
+      </View>
+      
+      {/* İstatistik Kartları */}
+      <View style={styles.statsRow}>
+        <View style={styles.statCard}>
+          <Icon name="help-circle-outline" size={24} color={theme.colors.primary} />
+          <Text style={styles.statValue}>{questionCount}</Text>
+          <Text style={styles.statLabel}>Toplam Soru</Text>
+        </View>
+        
+        <View style={styles.statCard}>
+          <Icon name="format-list-bulleted" size={24} color={theme.colors.primary} />
+          <Text style={styles.statValue}>{Object.keys(categoryCounts).length}</Text>
+          <Text style={styles.statLabel}>Kategori</Text>
+        </View>
+      </View>
+      
+      {/* Ana Menü */}
+      <ScrollView style={styles.menuContainer}>
+        <View style={styles.menuGrid}>
+          <MenuItem 
+            icon="play-circle-outline"
+            title="Soru Çöz"
+            color={theme.colors.primary} 
+            onPress={handleStartGame}
+          />
+          
+          <MenuItem 
+            icon="database-edit"
+            title="Soru Yönetimi"
+            color="#FF5722"
+            onPress={() => navigation.navigate('QuestionManagement')}
+          />
+          
+          <MenuItem 
+            icon="plus-circle-outline"
+            title="Soru Ekle"
+            color="#2196F3"
+            onPress={() => navigation.navigate('AddQuestion')}
+          />
+          
+          <MenuItem 
+            icon="chart-bar"
+            title="İstatistikler"
+            color="#9C27B0"
+            onPress={() => navigation.navigate('Statistics')}
+          />
+          
+          <MenuItem 
+            icon="cog-outline"
+            title="Ayarlar"
+            color="#607D8B"
+            onPress={() => navigation.navigate('Settings')}
+          />
+          
+          <MenuItem 
+            icon="information-outline"
+            title="Hakkında"
+            color="#795548"
+            onPress={() => navigation.navigate('About')}
+          />
+          
+          {developerMode && (
+            <MenuItem 
+              icon="database-import"
+              title={loadingData ? 'Yükleniyor...' : 'Örnek Veri Yükle'}
+              color="#4CAF50"
+              onPress={handleLoadSampleData}
+              disabled={loadingData}
+              isLoading={loadingData}
+            />
+          )}
+        </View>
+      </ScrollView>
+      
+      {/* Alt Bilgi */}
+      <View style={styles.footer}>
+        <Text style={styles.footerText}>
+          Bilbakalım v1.0 © 2025
+          {developerMode ? ' (Geliştirici Modu)' : ''}
+        </Text>
+      </View>
     </SafeAreaView>
   );
 };
@@ -77,67 +307,120 @@ const HomeScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: theme.colors.background,
   },
-  gradient: {
+  loadingContainer: {
     flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: theme.colors.background,
   },
-  content: {
-    flex: 1,
-    justifyContent: 'space-between',
-    padding: wp(5),
-    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + hp(8) : hp(10),
-    paddingBottom: hp(10),
+  loadingText: {
+    marginTop: 10,
+    color: theme.colors.text,
+    fontSize: 16,
   },
   header: {
-    alignItems: 'center',
-  },
-  title: {
-    fontSize: fontSize(10),
-    fontWeight: 'bold',
-    color: colors.white,
-    marginTop: hp(2),
-  },
-  subtitle: {
-    fontSize: fontSize(4.5),
-    color: colors.whiteMuted,
-    marginTop: hp(1),
-  },
-  buttonContainer: {
-    width: '100%',
-    alignItems: 'center',
-  },
-  button: {
-    width: '80%',
-    height: hp(7),
-    borderRadius: wp(8),
-    overflow: 'hidden',
-    marginBottom: hp(2),
-    elevation: 5,
-    shadowColor: colors.primary,
+    backgroundColor: theme.colors.primary,
+    padding: 16,
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight + 16 : 16,
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
-    shadowRadius: 3,
+    shadowRadius: 4,
+    elevation: 5,
   },
-  buttonGradient: {
-    flex: 1,
+  headerContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: wp(5),
   },
-  buttonText: {
-    color: colors.white,
-    fontSize: fontSize(5),
+  headerTextContainer: {
+    marginLeft: 12,
+  },
+  title: {
+    fontSize: 24,
     fontWeight: 'bold',
-    marginRight: wp(2),
+    color: '#fff',
   },
-  aboutButton: {
-    padding: wp(4),
+  subtitle: {
+    fontSize: 14,
+    color: 'rgba(255, 255, 255, 0.8)',
+    marginTop: 2,
   },
-  aboutText: {
-    color: colors.whiteMuted,
-    fontSize: fontSize(4),
+  statsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: 16,
+    marginTop: 8,
+  },
+  statCard: {
+    backgroundColor: theme.colors.cardBackground,
+    borderRadius: 12,
+    padding: 16,
+    width: '48%',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  statValue: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: theme.colors.text,
+    marginTop: 8,
+  },
+  statLabel: {
+    fontSize: 12,
+    color: theme.colors.textMuted,
+    marginTop: 4,
+  },
+  menuContainer: {
+    flex: 1,
+    padding: 16,
+  },
+  menuGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  menuItem: {
+    width: '48%',
+    height: 100,
+    borderRadius: 12,
+    marginBottom: 16,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  menuItemContent: {
+    flex: 1,
+    padding: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  menuItemText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginTop: 10,
+    textAlign: 'center',
+  },
+  footer: {
+    padding: 16,
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  footerText: {
+    fontSize: 12,
+    color: theme.colors.textMuted,
   },
 });
 

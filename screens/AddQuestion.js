@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, StyleSheet, TouchableOpacity, ScrollView, SafeAreaView, Alert, Switch } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, TextInput, StyleSheet, TouchableOpacity, ScrollView, SafeAreaView, Alert, Switch, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import QuestionService from '../services/QuestionService';
@@ -10,15 +10,18 @@ const CATEGORIES = [
   { name: 'Bilim', icon: 'atom', color: 'rgba(33, 150, 243, 1)' },
   { name: 'Günlük', icon: 'calendar-today', color: 'rgba(156, 39, 176, 1)' },
   { name: 'Spor', icon: 'soccer', color: 'rgba(255, 152, 0, 1)' },
-  { name: 'Etkinlik', icon: 'star', color: 'rgba(96, 125, 139, 1)' },
-  { name: 'Söz ve Deyiş', icon: 'chat', color: 'rgba(0, 188, 212, 1)' },
-  { name: 'Spor ve Oyun', icon: 'basketball', color: 'rgba(121, 85, 72, 1)' },
+  { name: 'Tarih', icon: 'history', color: 'rgba(96, 125, 139, 1)' },
+  { name: 'Atasözleri', icon: 'chat', color: 'rgba(0, 188, 212, 1)' },
+  { name: 'Oyunlar', icon: 'basketball', color: 'rgba(121, 85, 72, 1)' },
   { name: 'Yeşilçam', icon: 'movie', color: 'rgba(233, 30, 99, 1)' },
 ];
 
-const DIFFICULTY_LEVELS = [1, 2, 3, 4, 5];
+const DIFFICULTY_LEVELS = ["Kolay", "Orta", "Zor"];
 
-const AddQuestion = ({ navigation }) => {
+const AddQuestion = ({ navigation, route }) => {
+  const editMode = route.params?.editMode || false;
+  const questionToEdit = route.params?.question || null;
+  
   const [question, setQuestion] = useState('');
   const [options, setOptions] = useState([
     { id: 'a', text: '', isCorrect: true },
@@ -27,9 +30,68 @@ const AddQuestion = ({ navigation }) => {
     { id: 'd', text: '', isCorrect: false }
   ]);
   const [selectedCategory, setSelectedCategory] = useState(null);
-  const [difficulty, setDifficulty] = useState(1);
+  const [difficulty, setDifficulty] = useState("Kolay");
   const [explanation, setExplanation] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Düzenleme modunda ise var olan soruyu yükle
+  useEffect(() => {
+    if (editMode && questionToEdit) {
+      loadQuestionData(questionToEdit);
+    }
+  }, [editMode, questionToEdit]);
+
+  const loadQuestionData = (questionData) => {
+    console.log('Düzenlenecek soru:', JSON.stringify(questionData, null, 2));
+    
+    // Soru metni
+    setQuestion(questionData.question || '');
+    
+    // Açıklama
+    setExplanation(questionData.explanation || '');
+    
+    // Kategori ayarla
+    const category = CATEGORIES.find(cat => cat.name === questionData.category);
+    setSelectedCategory(category || null);
+    
+    // Zorluk seviyesi
+    setDifficulty(questionData.difficulty || "Kolay");
+    
+    // Seçenekleri ayarla
+    if (Array.isArray(questionData.options) && questionData.options.length > 0) {
+      // Firebase'den gelen options formatına göre işlem yap
+      const formattedOptions = [...options]; // Varsayılan yapıyı al
+      
+      // Her bir seçeneği karşılık gelen indekse yerleştir
+      questionData.options.forEach((opt, index) => {
+        if (index < formattedOptions.length) {
+          if (typeof opt === 'string') {
+            // Eski format: options dizisi string içeriyorsa
+            formattedOptions[index].text = opt;
+            // Doğru cevabı kontrol et
+            if (questionData.correctAnswer && questionData.correctAnswer === opt) {
+              formattedOptions[index].isCorrect = true;
+            } else {
+              formattedOptions[index].isCorrect = false;
+            }
+          } else if (opt && typeof opt === 'object') {
+            // Yeni format: options dizisi { id, text, isCorrect } nesneleri içeriyorsa
+            formattedOptions[index].text = opt.text || '';
+            formattedOptions[index].isCorrect = opt.isCorrect || false;
+          }
+        }
+      });
+      
+      // En az bir tane doğru cevap işaretlenmiş mi kontrol et
+      if (!formattedOptions.some(opt => opt.isCorrect)) {
+        // Hiç doğru cevap işaretlenmemişse ilk seçeneği doğru olarak ayarla
+        formattedOptions[0].isCorrect = true;
+      }
+      
+      setOptions(formattedOptions);
+      console.log('Formatlanmış seçenekler:', JSON.stringify(formattedOptions, null, 2));
+    }
+  };
 
   const handleOptionChange = (index, text) => {
     const newOptions = [...options];
@@ -63,6 +125,11 @@ const AddQuestion = ({ navigation }) => {
       }
     }
 
+    if (!options.some(option => option.isCorrect)) {
+      Alert.alert('Hata', 'Lütfen doğru seçeneği işaretleyin');
+      return false;
+    }
+
     if (!explanation.trim()) {
       Alert.alert('Hata', 'Lütfen bir açıklama girin');
       return false;
@@ -77,6 +144,7 @@ const AddQuestion = ({ navigation }) => {
     setLoading(true);
     
     try {
+      // Soru verilerini hazırla
       const questionData = {
         category: selectedCategory.name,
         question,
@@ -85,14 +153,42 @@ const AddQuestion = ({ navigation }) => {
         explanation,
       };
 
-      await QuestionService.addQuestion(questionData);
-      Alert.alert(
-        'Başarılı', 
-        'Soru başarıyla eklendi!',
-        [{ text: 'Tamam', onPress: resetForm }]
-      );
+      console.log('Gönderilecek soru verisi:', JSON.stringify(questionData, null, 2));
+
+      if (editMode && questionToEdit) {
+        // Güncelleme işlemi - QuestionService kullan
+        console.log('Soru güncelleniyor... ID:', questionToEdit.id);
+        
+        // ID sonradan eklenmemeli, sadece referans olmalı
+        await QuestionService.updateQuestion(questionToEdit.id, questionData);
+        
+        Alert.alert(
+          'Başarılı', 
+          'Soru başarıyla güncellendi!',
+          [{ text: 'Tamam', onPress: () => navigation.goBack() }]
+        );
+      } else {
+        // Yeni soru ekleme
+        console.log('Yeni soru ekleniyor...');
+        const questionId = await QuestionService.addQuestion(questionData);
+        
+        if (questionId) {
+          Alert.alert(
+            'Başarılı', 
+            'Soru başarıyla eklendi!',
+            [{ text: 'Tamam', onPress: resetForm }]
+          );
+        } else {
+          throw new Error('Soru eklenirken bir hata oluştu');
+        }
+      }
     } catch (error) {
-      Alert.alert('Hata', 'Soru eklenirken bir hata oluştu: ' + error.message);
+      console.error('Soru işlem hatası:', error);
+      Alert.alert(
+        'Hata', 
+        `Soru ${editMode ? 'güncellenirken' : 'eklenirken'} bir hata oluştu: ` + 
+        (error.message || error)
+      );
     } finally {
       setLoading(false);
     }
@@ -107,7 +203,7 @@ const AddQuestion = ({ navigation }) => {
       { id: 'd', text: '', isCorrect: false }
     ]);
     setSelectedCategory(null);
-    setDifficulty(1);
+    setDifficulty("Kolay");
     setExplanation('');
   };
 
@@ -121,7 +217,9 @@ const AddQuestion = ({ navigation }) => {
           >
             <Icon name="arrow-left" size={24} color="white" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Yeni Soru Ekle</Text>
+          <Text style={styles.headerTitle}>
+            {editMode ? 'Soruyu Düzenle' : 'Yeni Soru Ekle'}
+          </Text>
         </View>
 
         {/* Kategori Seçimi */}
@@ -192,14 +290,17 @@ const AddQuestion = ({ navigation }) => {
         ))}
 
         {/* Zorluk Seviyesi */}
-        <Text style={styles.sectionTitle}>Zorluk Seviyesi: {difficulty}</Text>
+        <Text style={styles.sectionTitle}>Zorluk Seviyesi</Text>
         <View style={styles.difficultyContainer}>
           {DIFFICULTY_LEVELS.map((level) => (
             <TouchableOpacity
               key={level}
               style={[
                 styles.difficultyButton,
-                difficulty === level && styles.activeDifficultyButton
+                difficulty === level && styles.activeDifficultyButton,
+                level === "Kolay" && styles.easyButton,
+                level === "Orta" && styles.mediumButton,
+                level === "Zor" && styles.hardButton,
               ]}
               onPress={() => setDifficulty(level)}
             >
@@ -236,10 +337,16 @@ const AddQuestion = ({ navigation }) => {
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
           >
-            <Text style={styles.submitText}>
-              {loading ? 'Ekleniyor...' : 'Soruyu Ekle'}
-            </Text>
-            {!loading && <Icon name="check" size={24} color="white" />}
+            {loading ? (
+              <ActivityIndicator color="white" size="small" />
+            ) : (
+              <>
+                <Text style={styles.submitText}>
+                  {editMode ? 'Soruyu Güncelle' : 'Soruyu Ekle'}
+                </Text>
+                <Icon name="check" size={24} color="white" />
+              </>
+            )}
           </LinearGradient>
         </TouchableOpacity>
       </ScrollView>
@@ -344,19 +451,29 @@ const styles = StyleSheet.create({
     marginVertical: 10,
   },
   difficultyButton: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    flex: 1,
+    height: 50,
+    borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
+    marginHorizontal: 5,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  easyButton: {
+    backgroundColor: 'rgba(76, 175, 80, 0.2)',
+  },
+  mediumButton: {
+    backgroundColor: 'rgba(255, 193, 7, 0.2)',
+  },
+  hardButton: {
+    backgroundColor: 'rgba(244, 67, 54, 0.2)',
   },
   activeDifficultyButton: {
-    backgroundColor: '#4CAF50',
+    borderWidth: 2,
   },
   difficultyText: {
     color: 'white',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
   },
   activeDifficultyText: {

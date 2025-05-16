@@ -1,114 +1,127 @@
-import { database } from '../config/firebase';
-import { ref, push, get, set } from 'firebase/database';
+import { firebaseService } from './firebase';
 
 class QuestionService {
-  // Yeni soru ekle
+  // Firebasebağlantısını test et
+  static async testConnection() {
+    try {
+      return await firebaseService.testConnection();
+    } catch (error) {
+      console.error('Bağlantı testi hatası:', error);
+      return false;
+    }
+  }
+
+  // Tüm soruları getir
+  static async getAllQuestions() {
+    try {
+      return await firebaseService.getAllQuestions();
+    } catch (error) {
+      console.error('Soruları getirme hatası:', error);
+      return [];
+    }
+  }
+
+  // Soru ekle
   static async addQuestion(questionData) {
     try {
-      const categoryKey = questionData.category.toLowerCase().replace(/\s+/g, '');
-      const questionsRef = ref(database, `questions/${categoryKey}`);
-      const newQuestionRef = push(questionsRef);
-      await set(newQuestionRef, {
-        ...questionData,
-        created_at: new Date().toISOString()
-      });
-      return newQuestionRef.key;
+      return await firebaseService.addQuestion(questionData);
     } catch (error) {
-      console.error('Soru eklenirken hata:', error);
+      console.error('Soru eklerken hata:', error);
       throw error;
+    }
+  }
+
+  // Soru güncelle
+  static async updateQuestion(questionId, questionData) {
+    try {
+      return await firebaseService.updateQuestion(questionId, questionData);
+    } catch (error) {
+      console.error('Soru güncellerken hata:', error);
+      throw error;
+    }
+  }
+
+  // Soru sil
+  static async deleteQuestion(questionId) {
+    try {
+      return await firebaseService.deleteQuestion(questionId);
+    } catch (error) {
+      console.error('Soru silerken hata:', error);
+      throw error;
+    }
+  }
+
+  // Çoklu soru sil
+  static async deleteMultipleQuestions(questionIds) {
+    try {
+      return await firebaseService.deleteMultipleQuestions(questionIds);
+    } catch (error) {
+      console.error('Çoklu soru silerken hata:', error);
+      throw error;
+    }
+  }
+
+  // Kullanıcı istatistikleri
+  static async getUserStatistics(userId = 'default') {
+    try {
+      return await firebaseService.getUserStatistics(userId);
+    } catch (error) {
+      console.error('İstatistikleri getirirken hata:', error);
+      return null;
+    }
+  }
+
+  // İstatistikleri güncelle
+  static async updateUserStatistics(statistics, userId = 'default') {
+    try {
+      return await firebaseService.updateUserStatistics(statistics, userId);
+    } catch (error) {
+      console.error('İstatistikleri güncellerken hata:', error);
+      return false;
     }
   }
 
   // Kategoriye göre soruları getir
-  static async getQuestionsByCategory(category) {
+  async getQuestionsByCategory(category) {
+    return await firebaseService.getQuestionsByCategory(category);
+  }
+  
+  // Rastgele sorular getir
+  async getRandomQuestions(count = 10) {
     try {
-      console.log(`Kategori için sorular getiriliyor: ${category}`);
+      const allQuestions = await firebaseService.getAllQuestions();
       
-      // Doğrudan kategori düğümü referansını al
-      const categoryRef = ref(database, `questions/${category.toLowerCase()}`);
-      const snapshot = await get(categoryRef);
+      // Soruları karıştır
+      const shuffled = allQuestions.sort(() => 0.5 - Math.random());
       
-      if (snapshot.exists()) {
-        // Kategori altındaki tüm soruları bir diziye dönüştür
-        const questions = [];
-        snapshot.forEach((childSnapshot) => {
-          questions.push({
-            id: childSnapshot.key,
-            ...childSnapshot.val()
-          });
-        });
-        
-        console.log(`${category} kategorisi için ${questions.length} soru bulundu`);
-        return questions;
-      }
-      
-      console.log(`${category} kategorisi için soru bulunamadı`);
-      return [];
+      // İstenen sayıda soru döndür
+      return shuffled.slice(0, count);
     } catch (error) {
-      console.error('Sorular getirilirken hata:', error);
+      console.error('Rastgele soru getirme hatası:', error);
       throw error;
     }
   }
-
-  // Rastgele soru getir
-  static async getRandomQuestions(limit = 10) {
-    try {
-      const questionsRef = ref(database, 'questions');
-      const snapshot = await get(questionsRef);
-      
-      if (snapshot.exists()) {
-        const allQuestions = [];
-        
-        // Tüm kategorileri dolaş
-        snapshot.forEach((categorySnapshot) => {
-          // Her kategori altındaki soruları dolaş
-          categorySnapshot.forEach((questionSnapshot) => {
-            allQuestions.push({
-              id: questionSnapshot.key,
-              category: categorySnapshot.key,
-              ...questionSnapshot.val()
-            });
-          });
-        });
-        
-        // Soruları karıştır
-        const shuffled = allQuestions.sort(() => 0.5 - Math.random());
-        return shuffled.slice(0, limit);
-      }
-      return [];
-    } catch (error) {
-      console.error('Rastgele sorular getirilirken hata:', error);
-      throw error;
-    }
-  }
-
-  // Çoklu soru ekle
-  static async addMultipleQuestions(questionsArray) {
+  
+  // Birden çok soru ekle
+  async addMultipleQuestions(questions) {
     try {
       const results = [];
-      
-      for (const question of questionsArray) {
-        const categoryKey = question.category.toLowerCase().replace(/\s+/g, '');
-        const questionsRef = ref(database, `questions/${categoryKey}`);
-        const newQuestionRef = push(questionsRef);
-        
-        await set(newQuestionRef, {
-          ...question,
-          created_at: new Date().toISOString()
-        });
-        
-        results.push({
-          id: newQuestionRef.key,
-          ...question
-        });
+      for (const question of questions) {
+        const result = await this.addQuestion(question);
+        results.push(result);
       }
-      
       return results;
     } catch (error) {
-      console.error('Çoklu soru eklerken hata:', error);
+      console.error('Çoklu soru ekleme hatası:', error);
       throw error;
     }
+  }
+
+  // Zorluk seviyesine göre soruları getir
+  async getQuestionsByDifficulty(difficulty) {
+    return await firebaseService.getQuestionsByDifficulty(difficulty);
   }
 }
 
-export default QuestionService; 
+const questionService = new QuestionService();
+export default questionService; 
